@@ -1,0 +1,12 @@
+FROM python:3.11-slim
+
+# Image dédiée à l'UI MLflow, indépendante d'Airflow. Sert les expériences stockées
+# en mode fichier dans ./mlruns (monté en volume par docker-compose).
+COPY requirements-mlflow.txt /requirements-mlflow.txt
+RUN pip install --no-cache-dir -r /requirements-mlflow.txt
+
+EXPOSE 5000
+
+CMD ["mlflow", "ui", \
+     "--backend-store-uri", "file:///mlruns", \
+     "--host", "0.0.0.0", "--port", "5000"]

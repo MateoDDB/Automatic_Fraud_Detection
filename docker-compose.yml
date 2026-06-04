@@ -102,5 +102,17 @@ services:
       - "8502:8501"
     restart: always
 
+  # UI MLflow (suivi d'expériences) : image légère dédiée, lit les runs en mode
+  # fichier dans ./mlruns. Indépendante d'Airflow et de Neon.
+  mlflow-ui:
+    build:
+      context: .
+      dockerfile: Dockerfile.mlflow
+    volumes:
+      - ./mlruns:/mlruns
+    ports:
+      - "5001:5000"
+    restart: always
+
 volumes:
   postgres-db-volume:
