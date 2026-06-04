@@ -11,19 +11,7 @@ vue de supervision, MLflow trace les entraînements, et une CI lint et teste le 
 
 Trois couches : source de données, orchestration Airflow, sorties métier.
 
-```
-Hors-ligne (une fois, en local)
-  fraudTest.csv -> feature engineering -> entraînement scikit-learn
-                -> models/fraud_pipeline.joblib (préprocessing + modèle)
-
-En ligne (orchestré par Airflow)
-  API temps réel ─┐
-  .joblib        ─┴─> DAG temps réel (chaque minute)
-                        features -> prédiction -> écriture Neon
-                        -> e-mail si fraude prédite
-  Neon -> DAG quotidien (8h) -> e-mail récapitulatif de la veille
-  Neon -> dashboard Streamlit (supervision)
-```
+![Schéma d'architecture](architecture/architecture.png)
 
 - **Source** : API HuggingFace Space, une transaction par appel, limitée à
   5 appels/minute.
