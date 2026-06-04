@@ -14,7 +14,7 @@ from src import config
 from src.db import construire_enregistrement, inserer_transaction
 from src.notifications import envoyer_email
 from src.predictor import predire
-from realtime_fraud_detection_dag import construire_corps_alerte
+from src.reporting import construire_corps_alerte
 
 
 def selectionner_fraude_predite() -> tuple[pd.DataFrame, float, bool]:

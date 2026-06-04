@@ -16,20 +16,7 @@ from src.api_client import recuperer_transaction
 from src.db import construire_enregistrement, inserer_transaction
 from src.notifications import envoyer_email
 from src.predictor import predire
-
-
-def construire_corps_alerte(enregistrement: dict) -> tuple[str, str]:
-    """Construit le sujet et le corps de l'e-mail d'alerte d'une fraude."""
-    sujet = f"Alerte fraude — transaction {enregistrement['trans_num']}"
-    corps = (
-        "Une transaction vient d'être classée comme frauduleuse.\n\n"
-        f"Identifiant : {enregistrement['trans_num']}\n"
-        f"Marchand    : {enregistrement['merchant']} ({enregistrement['category']})\n"
-        f"Montant     : {enregistrement['amt']:.2f}\n"
-        f"Probabilité : {enregistrement['fraud_probability']:.3f}\n"
-        f"Horodatage  : {enregistrement['transaction_time']} UTC\n"
-    )
-    return sujet, corps
+from src.reporting import construire_corps_alerte
 
 
 def traiter_transaction() -> None:
