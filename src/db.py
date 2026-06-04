@@ -4,8 +4,9 @@ Centralise la connexion, la création du schéma, l'insertion idempotente des
 transactions scorées et la requête du rapport quotidien. Toutes les requêtes sont
 paramétrées (aucune concaténation de valeurs dans le SQL).
 
-La colonne `current_time` reprend le nom du champ renvoyé par l'API. C'est aussi
-un mot-clé SQL : elle est donc systématiquement entre guillemets dans les requêtes.
+La colonne `transaction_time` correspond au champ `current_time` renvoyé par l'API
+(renommé pour éviter le mot-clé réservé PostgreSQL). Elle est stockée en UTC, ce
+qui rend le filtre « transactions de la veille » insensible au fuseau du serveur.
 """
 import psycopg2
 from psycopg2.extras import RealDictCursor
@@ -27,7 +28,7 @@ COLONNES_TRANSACTION = [
     "merch_long",
     "job",
     "dob",
-    "current_time",
+    "transaction_time",
     "fraud_probability",
     "predicted_fraud",
     "is_fraud_actual",
@@ -48,7 +49,7 @@ CREATE TABLE IF NOT EXISTS transactions (
     merch_long         DOUBLE PRECISION,
     job                TEXT,
     dob                DATE,
-    "current_time"     TIMESTAMP,
+    transaction_time   TIMESTAMP,
     fraud_probability  DOUBLE PRECISION,
     predicted_fraud    BOOLEAN,
     is_fraud_actual    SMALLINT,
@@ -61,23 +62,26 @@ CREATE TABLE IF NOT EXISTS transactions (
 REQUETE_UPSERT = """
 INSERT INTO transactions (
     trans_num, cc_num, merchant, category, amt, gender, city_pop,
-    lat, long, merch_lat, merch_long, job, dob, "current_time",
+    lat, long, merch_lat, merch_long, job, dob, transaction_time,
     fraud_probability, predicted_fraud, is_fraud_actual
 ) VALUES (
     %(trans_num)s, %(cc_num)s, %(merchant)s, %(category)s, %(amt)s, %(gender)s, %(city_pop)s,
-    %(lat)s, %(long)s, %(merch_lat)s, %(merch_long)s, %(job)s, %(dob)s, %(current_time)s,
+    %(lat)s, %(long)s, %(merch_lat)s, %(merch_long)s, %(job)s, %(dob)s, %(transaction_time)s,
     %(fraud_probability)s, %(predicted_fraud)s, %(is_fraud_actual)s
 )
 ON CONFLICT (trans_num) DO NOTHING;
 """
 
-# Transactions dont l'instant d'appel API tombe la veille (jour calendaire précédent).
+# Transactions de la veille, bornées sur le jour calendaire UTC précédent.
+# Le filtre est exprimé en UTC pour rester stable quel que soit le fuseau du serveur
+# et ne pas décaler d'un jour autour de minuit.
 REQUETE_VEILLE = """
-SELECT trans_num, merchant, category, amt, "current_time",
+SELECT trans_num, merchant, category, amt, transaction_time,
        fraud_probability, predicted_fraud, is_fraud_actual
 FROM transactions
-WHERE "current_time"::date = (CURRENT_DATE - INTERVAL '1 day')::date
-ORDER BY "current_time";
+WHERE transaction_time >= date_trunc('day', timezone('UTC', now())) - INTERVAL '1 day'
+  AND transaction_time <  date_trunc('day', timezone('UTC', now()))
+ORDER BY transaction_time;
 """
 
 

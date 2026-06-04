@@ -41,14 +41,18 @@ def calculer_distance_haversine(lat1, lon1, lat2, lon2):
 def _serie_horodatage(df: pd.DataFrame) -> pd.Series:
     """Renvoie l'horodatage de référence selon le contexte d'appel.
 
-    À l'entraînement, le CSV fournit `trans_date_trans_time` ; au serving, l'API
-    ne fournit que `current_time`. La sémantique temporelle (heure de la journée,
-    jour de la semaine) est transférable entre les deux.
+    À l'entraînement, le CSV fournit `trans_date_trans_time` (texte) ; au serving,
+    l'API fournit `current_time` sous forme d'epoch en millisecondes, converti ici
+    en timestamp UTC naïf. La sémantique temporelle (heure de la journée, jour de
+    la semaine) est transférable entre les deux.
     """
     if "trans_date_trans_time" in df.columns:
         return pd.to_datetime(df["trans_date_trans_time"])
     if "current_time" in df.columns:
-        return pd.to_datetime(df["current_time"])
+        serie = df["current_time"]
+        if pd.api.types.is_numeric_dtype(serie):
+            return pd.to_datetime(serie, unit="ms")
+        return pd.to_datetime(serie)
     raise KeyError(
         "Aucune colonne d'horodatage trouvée (ni trans_date_trans_time ni current_time)."
     )
