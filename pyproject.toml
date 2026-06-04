@@ -1,6 +1,8 @@
 [tool.ruff]
 line-length = 110
 target-version = "py311"
+# Les notebooks d'exploration ne sont pas soumis au lint de production.
+exclude = ["notebooks"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "W"]
