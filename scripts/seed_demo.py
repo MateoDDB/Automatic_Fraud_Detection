@@ -16,25 +16,20 @@ from src import config
 from src.db import construire_enregistrement, inserer_transaction
 from src.predictor import predire
 
-NB_NORMALES = 22
-NB_FRAUDES = 3
+NB_NORMALES = 45
+NB_FRAUDES = 15
 
 
 def selectionner(df: pd.DataFrame) -> pd.DataFrame:
-    """Compose un échantillon de normales et de fraudes effectivement détectées."""
+    """Compose un échantillon de normales et de fraudes, sans présélection.
+
+    Les fraudes ne sont pas filtrées sur la prédiction : c'est le pipeline qui
+    tranche au moment de l'insertion, ce qui laisse apparaître de vrais ratés
+    (rappel réel) et d'éventuels faux positifs dans le rapport.
+    """
     normales = df[df["is_fraud"] == 0].head(NB_NORMALES)
-
-    # On ne retient que des fraudes que le modèle prédit au-dessus du seuil, pour
-    # garantir des vrais positifs et un couple précision/rappel exploitable.
-    index_fraudes = []
-    for index in df[df["is_fraud"] == 1].index:
-        _, prediction = predire(df.loc[[index]])
-        if prediction:
-            index_fraudes.append(index)
-        if len(index_fraudes) == NB_FRAUDES:
-            break
-
-    return pd.concat([normales, df.loc[index_fraudes]])
+    fraudes = df[df["is_fraud"] == 1].head(NB_FRAUDES)
+    return pd.concat([normales, fraudes])
 
 
 def horodatage_hier(rang: int, total: int) -> datetime:
