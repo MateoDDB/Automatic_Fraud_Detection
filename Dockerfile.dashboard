@@ -6,6 +6,9 @@ WORKDIR /app
 COPY requirements-dashboard.txt /app/requirements-dashboard.txt
 RUN pip install --no-cache-dir -r /app/requirements-dashboard.txt
 
+# Thème et configuration Streamlit, lus depuis le répertoire de travail (/app).
+COPY .streamlit /app/.streamlit
+
 # src/ et dashboard/ sont montés en volume par docker-compose.
 ENV PYTHONPATH=/app
 
