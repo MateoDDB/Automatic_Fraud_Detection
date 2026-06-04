@@ -1,0 +1,14 @@
+.git
+.venv
+data
+models
+logs
+mlruns
+postgres-db-volume
+__pycache__
+*.py[cod]
+.env
+.env.*
+notebooks
+.ipynb_checkpoints
+.DS_Store
