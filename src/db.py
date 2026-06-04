@@ -8,10 +8,12 @@ La colonne `transaction_time` correspond au champ `current_time` renvoyé par l'
 (renommé pour éviter le mot-clé réservé PostgreSQL). Elle est stockée en UTC, ce
 qui rend le filtre « transactions de la veille » insensible au fuseau du serveur.
 """
+import pandas as pd
 import psycopg2
 from psycopg2.extras import RealDictCursor
 
 from src import config
+from src.features import serie_horodatage
 
 # Ordre de référence des colonnes insérées par le DAG temps réel.
 COLONNES_TRANSACTION = [
@@ -83,6 +85,42 @@ WHERE transaction_time >= date_trunc('day', timezone('UTC', now())) - INTERVAL '
   AND transaction_time <  date_trunc('day', timezone('UTC', now()))
 ORDER BY transaction_time;
 """
+
+
+def construire_enregistrement(
+    df: pd.DataFrame,
+    probabilite: float,
+    prediction: bool,
+    is_fraud_actual: int | None,
+) -> dict:
+    """Construit le dict d'insertion à partir d'une transaction et de son score.
+
+    Les valeurs sont converties en types Python natifs (psycopg2 ne sait pas adapter
+    numpy.int64/float64). `transaction_time` est dérivé de l'horodatage de la
+    transaction — epoch ms de l'API au serving, ou date du CSV pour la démo — via la
+    même fonction que le feature engineering, donc en UTC et sans risque d'écart.
+    """
+    ligne = df.iloc[0]
+    horodatage = serie_horodatage(df).iloc[0].to_pydatetime()
+    return {
+        "trans_num": str(ligne["trans_num"]),
+        "cc_num": int(ligne["cc_num"]),
+        "merchant": str(ligne["merchant"]),
+        "category": str(ligne["category"]),
+        "amt": float(ligne["amt"]),
+        "gender": str(ligne["gender"]),
+        "city_pop": int(ligne["city_pop"]),
+        "lat": float(ligne["lat"]),
+        "long": float(ligne["long"]),
+        "merch_lat": float(ligne["merch_lat"]),
+        "merch_long": float(ligne["merch_long"]),
+        "job": str(ligne["job"]),
+        "dob": str(ligne["dob"]),
+        "transaction_time": horodatage,
+        "fraud_probability": float(probabilite),
+        "predicted_fraud": bool(prediction),
+        "is_fraud_actual": None if is_fraud_actual is None else int(is_fraud_actual),
+    }
 
 
 def obtenir_connexion():

@@ -38,7 +38,7 @@ def calculer_distance_haversine(lat1, lon1, lat2, lon2):
     return 2 * rayon_terre_km * np.arcsin(np.sqrt(a))
 
 
-def _serie_horodatage(df: pd.DataFrame) -> pd.Series:
+def serie_horodatage(df: pd.DataFrame) -> pd.Series:
     """Renvoie l'horodatage de référence selon le contexte d'appel.
 
     À l'entraînement, le CSV fournit `trans_date_trans_time` (texte) ; au serving,
@@ -65,7 +65,7 @@ def construire_features(df: pd.DataFrame) -> pd.DataFrame:
     l'API. Renvoie un DataFrame ne contenant que les colonnes de features (sans le
     label), dans l'ordre défini par COLONNES_CATEGORIELLES + COLONNES_NUMERIQUES.
     """
-    horodatage = _serie_horodatage(df)
+    horodatage = serie_horodatage(df)
     dob = pd.to_datetime(df["dob"])
 
     features = pd.DataFrame(index=df.index)
