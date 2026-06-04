@@ -1,76 +1,157 @@
 # Automatic Fraud Detection
 
-Système de détection de fraude en temps réel. Un modèle scikit-learn entraîné
+Pipeline de détection de fraude en temps réel. Un modèle scikit-learn entraîné
 hors-ligne est servi par un pipeline de données orchestré par Airflow : chaque
-minute, une transaction est récupérée depuis une API, scorée, puis stockée dans
-une base PostgreSQL (Neon). Toute fraude détectée déclenche une alerte e-mail,
-et un récapitulatif de la veille est envoyé chaque matin.
-
-Projet de certification Bloc 3 — conception et mise en œuvre de pipelines de
-données pour l'IA. L'accent porte sur le pipeline, le modèle restant volontairement
-simple.
+minute, une transaction est récupérée depuis une API, scorée, puis écrite dans une
+base PostgreSQL (Neon). Toute fraude prédite déclenche une alerte e-mail, et un
+récapitulatif de la veille est envoyé chaque matin. Un dashboard Streamlit donne une
+vue de supervision, MLflow trace les entraînements, et une CI lint et teste le code.
 
 ## Architecture
 
-Trois couches : source de données → orchestration Airflow → sorties métier.
+Trois couches : source de données, orchestration Airflow, sorties métier.
 
-- Phase hors-ligne (une fois, en local) : EDA et feature engineering sur le CSV,
-  entraînement d'un `Pipeline` scikit-learn, sérialisé en un unique `.joblib`.
-- Phase en ligne (orchestrée) : un DAG « temps réel » (chaque minute) interroge
-  l'API, applique le même pipeline de préprocessing, prédit la probabilité de
-  fraude, écrit dans Neon et alerte par e-mail si nécessaire. Un DAG « quotidien »
-  (8h) agrège la veille et envoie un rapport.
+```
+Hors-ligne (une fois, en local)
+  fraudTest.csv -> feature engineering -> entraînement scikit-learn
+                -> models/fraud_pipeline.joblib (préprocessing + modèle)
 
-Le schéma d'infrastructure est dans `architecture/`.
+En ligne (orchestré par Airflow)
+  API temps réel ─┐
+  .joblib        ─┴─> DAG temps réel (chaque minute)
+                        features -> prédiction -> écriture Neon
+                        -> e-mail si fraude prédite
+  Neon -> DAG quotidien (8h) -> e-mail récapitulatif de la veille
+  Neon -> dashboard Streamlit (supervision)
+```
 
-## Stack
+- **Source** : API HuggingFace Space, une transaction par appel, limitée à
+  5 appels/minute.
+- **Orchestration** : Airflow (Docker Compose), base de métadonnées PostgreSQL
+  distincte de Neon.
+- **Stockage applicatif** : Neon PostgreSQL, accédé par les DAGs via `psycopg2`.
+- **Sorties** : alerte e-mail (SMTP), rapport quotidien e-mail, dashboard Streamlit.
+- **Suivi** : MLflow en mode fichier local (`mlruns/`), sans serveur.
+- **CI** : GitHub Actions, lint (ruff) et tests (pytest) des modules purs.
 
-- Python 3.11
-- scikit-learn, pandas, numpy, joblib (modélisation)
-- Apache Airflow 2.x via Docker Compose (orchestration)
-- Neon PostgreSQL via psycopg2 (stockage applicatif)
-- SMTP / smtplib (notifications)
+## Choix techniques
+
+- **Un seul `Pipeline` scikit-learn (features + modèle).** Le feature engineering
+  est intégré au pipeline sérialisé via un `FunctionTransformer`, et la même fonction
+  `construire_features` sert à l'entraînement (CSV) et au serving (API). Le `.joblib`
+  part des colonnes brutes et va jusqu'à la prédiction : aucune transformation n'est
+  réécrite côté production, ce qui élimine le train/serve skew. Seules des variables
+  calculables depuis une transaction isolée sont utilisées (montant, catégorie,
+  variables temporelles, âge, distance Haversine) ; aucune feature comportementale par
+  client, qui serait toujours vide au serving.
+
+- **Micro-batch via Airflow plutôt que Kafka.** La source ne se rafraîchit qu'à la
+  minute et est limitée à 5 appels/minute. Un DAG déclenché chaque minute épouse
+  exactement cette cadence ; un système de streaming serait surdimensionné.
+
+- **Seuil de décision à 0.30.** Une notification ne coûte qu'un e-mail, on privilégie
+  donc le rappel. À 0.30, le modèle détecte davantage de fraudes qu'à 0.40 au prix de
+  quelques faux positifs supplémentaires. Le seuil est configurable via
+  `FRAUD_THRESHOLD` ; les deux seuils sont évalués à l'entraînement.
 
 ## Prérequis
 
-- Docker et Docker Compose
-- Python 3.11 pour l'entraînement local
-- Une base Neon PostgreSQL et un compte SMTP (mot de passe d'application)
-- Le fichier `fraudTest.csv` en local (voir `data/README.md`)
+- Docker et Docker Compose.
+- Python 3.11 pour l'entraînement local.
+- Une base Neon PostgreSQL et un compte SMTP (mot de passe d'application).
+- Le fichier `fraudTest.csv` en local (voir `data/README.md`).
 
-## Installation et ordre de lancement
+## Mise en route
 
-1. Récupérer `fraudTest.csv` et noter son chemin (voir `data/README.md`).
-2. Copier `.env.template` vers `.env` et renseigner les variables (section
-   ci-dessous). Le fichier `.env` n'est jamais versionné.
-3. Créer un environnement et installer les dépendances d'entraînement :
-   `pip install -r requirements.txt`.
-4. Entraîner le modèle : `python -m src.train`. Produit
-   `models/fraud_pipeline.joblib` et affiche les métriques.
-5. Démarrer l'orchestration : `docker compose up`. Les deux DAGs apparaissent
-   dans l'interface Airflow.
+1. Copier `.env.template` vers `.env` et renseigner les variables (voir plus bas).
+   Le fichier `.env` n'est jamais versionné.
+
+2. Entraîner le modèle dans un environnement Python 3.11 :
+
+   ```
+   python3.11 -m venv .venv
+   source .venv/bin/activate
+   pip install -r requirements.txt
+   python -m src.train
+   ```
+
+   Produit `models/fraud_pipeline.joblib`, affiche les métriques et trace le run
+   dans `mlruns/`.
+
+3. Initialiser la table applicative dans Neon :
+
+   ```
+   python -m src.db
+   ```
+
+4. Démarrer l'orchestration et les interfaces :
+
+   ```
+   docker compose up -d
+   ```
+
+Services exposés :
+
+| Service | URL |
+|---|---|
+| Airflow | http://localhost:8085 (admin / admin) |
+| Dashboard Streamlit | http://localhost:8502 |
+| MLflow | http://localhost:5001 |
+
+Les deux DAGs sont en pause au démarrage. Dépauser `realtime_fraud_detection` pour
+lancer le scoring à la minute.
+
+## Démonstration
+
+Pour alimenter le rapport quotidien sans attendre, un script insère un échantillon
+du CSV (passé par le vrai pipeline) daté de la veille :
+
+```
+python -m scripts.seed_demo
+```
+
+Le rapport se déclenche ensuite via `daily_fraud_report`. Pour l'alerte e-mail, le
+DAG `demo_alerte_fraude` (déclenchement manuel) sélectionne une fraude du CSV que le
+modèle détecte et la fait passer dans tout le pipeline jusqu'à l'envoi.
 
 ## Structure
 
 ```
 .
-├── architecture/   schéma d'infrastructure
-├── notebooks/      EDA et feature engineering
-├── src/            code applicatif (features, entraînement, API, base, modèle, e-mails)
-├── dags/           DAGs Airflow (temps réel, rapport quotidien)
-├── dashboard/      monitoring Streamlit (Lot 2)
-├── tests/          tests unitaires (Lot 2)
-├── models/         modèle sérialisé (généré, non versionné)
-└── data/           CSV d'entraînement (local, non versionné)
+├── src/                code applicatif (features, entraînement, API, base, modèle,
+│                       e-mails, reporting)
+├── dags/               DAGs Airflow (temps réel, rapport quotidien, démo)
+├── dashboard/          dashboard de supervision Streamlit
+├── scripts/            outillage (seed de démonstration)
+├── tests/              tests unitaires des modules purs
+├── notebooks/          EDA et feature engineering
+├── models/             modèle sérialisé (généré)
+├── data/               CSV d'entraînement (local)
+├── docker-compose.yml  Airflow, dashboard, MLflow
+└── .github/workflows/  CI (ruff + pytest)
 ```
+
+Artefacts régénérables et non versionnés (`.gitignore`) : le CSV (`data/*.csv`), le
+modèle (`models/*.joblib`), les runs MLflow (`mlruns/`) et le fichier `.env`.
 
 ## Variables d'environnement
 
 Définies dans `.env` à partir de `.env.template` :
 
-- `API_URL` — endpoint de l'API temps réel
-- `CSV_PATH` — chemin local du CSV d'entraînement
-- `DATABASE_URL` — connexion Neon PostgreSQL
-- `FRAUD_THRESHOLD` — seuil de décision (défaut 0.4)
-- `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASSWORD`, `ALERT_EMAIL_TO` — e-mail
-- `AIRFLOW__CORE__FERNET_KEY`, `AIRFLOW__WEBSERVER__SECRET_KEY` — secrets Airflow
+- `API_URL` — endpoint de l'API temps réel.
+- `CSV_PATH` — chemin local du CSV d'entraînement.
+- `DATABASE_URL` — connexion Neon PostgreSQL.
+- `FRAUD_THRESHOLD` — seuil de décision (0.30).
+- `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASSWORD`, `ALERT_EMAIL_TO` — e-mail.
+- `AIRFLOW__CORE__FERNET_KEY`, `AIRFLOW__WEBSERVER__SECRET_KEY` — secrets Airflow.
+
+## Tests et lint
+
+```
+pip install -r requirements-dev.txt
+ruff check .
+pytest
+```
+
+Les tests couvrent les modules sans dépendance externe (`src/features.py`,
+`src/reporting.py`). Le serving, les DAGs et l'accès à Neon ne sont pas testés en CI.
