@@ -35,8 +35,10 @@ def agreger_veille(transactions: list[dict]) -> dict:
     vrais_positifs = sum(1 for t in transactions if t["predicted_fraud"] and t["is_fraud_actual"] == 1)
     faux_positifs = sum(1 for t in transactions if t["predicted_fraud"] and t["is_fraud_actual"] == 0)
     faux_negatifs = sum(1 for t in transactions if not t["predicted_fraud"] and t["is_fraud_actual"] == 1)
-    precision = vrais_positifs / (vrais_positifs + faux_positifs) if (vrais_positifs + faux_positifs) else None
-    rappel = vrais_positifs / (vrais_positifs + faux_negatifs) if (vrais_positifs + faux_negatifs) else None
+    total_predites = vrais_positifs + faux_positifs
+    total_reelles = vrais_positifs + faux_negatifs
+    precision = vrais_positifs / total_predites if total_predites else None
+    rappel = vrais_positifs / total_reelles if total_reelles else None
 
     return {
         "nb": nb,

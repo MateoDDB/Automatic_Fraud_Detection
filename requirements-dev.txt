@@ -1,0 +1,4 @@
+# Outils de développement et de CI : lint (ruff) et tests (pytest) des modules
+# purs de src/. N'inclut ni Airflow, ni le serving, ni l'accès à Neon.
+ruff==0.7.4
+pytest==8.3.3
