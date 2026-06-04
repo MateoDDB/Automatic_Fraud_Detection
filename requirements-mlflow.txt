@@ -1,0 +1,4 @@
+# Suivi d'expériences MLflow (mode fichier local), utilisé uniquement à
+# l'entraînement dans le venv. Volontairement hors de requirements.txt pour ne pas
+# toucher à l'image Airflow ni à la parité des versions du modèle.
+mlflow==2.17.2

@@ -12,7 +12,10 @@ Usage : python -m src.train
 from pathlib import Path
 
 import joblib
+import mlflow
+import mlflow.sklearn
 import pandas as pd
+import sklearn
 from sklearn.compose import ColumnTransformer
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.metrics import (
@@ -32,6 +35,19 @@ from src.features import COLONNES_CATEGORIELLES, COLONNES_NUMERIQUES, construire
 
 CHEMIN_MODELE = Path("models/fraud_pipeline.joblib")
 
+# Suivi d'expériences MLflow en mode fichier local (aucun serveur).
+CHEMIN_MLRUNS = "file:./mlruns"
+NOM_EXPERIENCE = "fraud_detection"
+
+# Hyperparamètres du Random Forest, centralisés pour être réutilisés à
+# l'entraînement et tracés tels quels dans MLflow.
+PARAMS_RANDOM_FOREST = {
+    "n_estimators": 200,
+    "class_weight": "balanced",
+    "n_jobs": -1,
+    "random_state": 42,
+}
+
 # Colonnes brutes lues dans le CSV : les variables nécessaires au feature
 # engineering, l'horodatage d'entraînement et le label.
 COLONNES_BRUTES = [
@@ -48,9 +64,9 @@ COLONNES_BRUTES = [
 COLONNE_HORODATAGE_CSV = "trans_date_trans_time"
 COLONNE_LABEL = "is_fraud"
 
-# Seuils de décision comparés : le seuil de production et une variante plus basse
-# pour illustrer le compromis précision/rappel.
-SEUILS_A_EVALUER = sorted({config.FRAUD_THRESHOLD, 0.3}, reverse=True)
+# Seuils de décision évalués et tracés : le seuil de production (0.30) et une
+# variante plus stricte (0.40), pour documenter le compromis précision/rappel.
+SEUILS_A_EVALUER = (0.40, 0.30)
 
 
 def charger_donnees(chemin_csv: str) -> tuple[pd.DataFrame, pd.Series]:
@@ -86,19 +102,17 @@ def construire_pipeline() -> Pipeline:
             ("encodage", encodeur),
             (
                 "modele",
-                RandomForestClassifier(
-                    n_estimators=200,
-                    class_weight="balanced",
-                    n_jobs=-1,
-                    random_state=42,
-                ),
+                RandomForestClassifier(**PARAMS_RANDOM_FOREST),
             ),
         ]
     )
 
 
-def afficher_evaluation(y_test: pd.Series, probabilites, seuil: float) -> None:
-    """Affiche précision, rappel, F1 et matrice de confusion pour un seuil donné."""
+def evaluer_seuil(y_test: pd.Series, probabilites, seuil: float) -> dict:
+    """Calcule et affiche précision, rappel, F1 et matrice de confusion à un seuil.
+
+    Renvoie un dictionnaire de métriques, réutilisé pour le suivi MLflow.
+    """
     predictions = (probabilites >= seuil).astype(int)
     precision = precision_score(y_test, predictions, zero_division=0)
     rappel = recall_score(y_test, predictions, zero_division=0)
@@ -111,34 +125,68 @@ def afficher_evaluation(y_test: pd.Series, probabilites, seuil: float) -> None:
     print(f"  F1        : {f1:.3f}")
     print(f"  Confusion : TN={tn}  FP={fp}  FN={fn}  TP={tp}")
 
+    return {"precision": precision, "recall": rappel, "f1": f1}
+
 
 def main() -> None:
-    """Entraîne, évalue et sérialise le pipeline de détection de fraude."""
+    """Entraîne, évalue, trace dans MLflow et sérialise le pipeline."""
     chemin_csv = config.exiger("CSV_PATH")
     print(f"Chargement du CSV : {chemin_csv}")
     X, y = charger_donnees(chemin_csv)
-    print(f"{len(X)} transactions, {int(y.sum())} fraudes ({y.mean():.3%}).")
+    taux_fraude = float(y.mean())
+    print(f"{len(X)} transactions, {int(y.sum())} fraudes ({taux_fraude:.3%}).")
 
     X_train, X_test, y_train, y_test = train_test_split(
         X, y, test_size=0.2, stratify=y, random_state=42
     )
 
-    pipeline = construire_pipeline()
-    print("Entraînement du Random Forest en cours...")
-    pipeline.fit(X_train, y_train)
+    mlflow.set_tracking_uri(CHEMIN_MLRUNS)
+    mlflow.set_experiment(NOM_EXPERIENCE)
 
-    # Métriques indépendantes du seuil, à privilégier sur données déséquilibrées.
-    probabilites = pipeline.predict_proba(X_test)[:, 1]
-    print("\nMétriques globales (jeu de test)")
-    print(f"  ROC-AUC : {roc_auc_score(y_test, probabilites):.3f}")
-    print(f"  PR-AUC  : {average_precision_score(y_test, probabilites):.3f}")
+    with mlflow.start_run(run_name="random_forest"):
+        mlflow.set_tags(
+            {"model_type": "RandomForestClassifier", "sklearn_version": sklearn.__version__}
+        )
+        mlflow.log_params(
+            {
+                **PARAMS_RANDOM_FOREST,
+                "fraud_threshold": config.FRAUD_THRESHOLD,
+                "n_transactions": len(X),
+                "taux_fraude": round(taux_fraude, 5),
+                "features": ", ".join(COLONNES_CATEGORIELLES + COLONNES_NUMERIQUES),
+            }
+        )
 
-    for seuil in SEUILS_A_EVALUER:
-        afficher_evaluation(y_test, probabilites, seuil)
+        pipeline = construire_pipeline()
+        print("Entraînement du Random Forest en cours...")
+        pipeline.fit(X_train, y_train)
 
-    CHEMIN_MODELE.parent.mkdir(parents=True, exist_ok=True)
-    joblib.dump(pipeline, CHEMIN_MODELE)
-    print(f"\nPipeline sérialisé dans {CHEMIN_MODELE}")
+        # Métriques indépendantes du seuil, à privilégier sur données déséquilibrées.
+        probabilites = pipeline.predict_proba(X_test)[:, 1]
+        roc_auc = roc_auc_score(y_test, probabilites)
+        pr_auc = average_precision_score(y_test, probabilites)
+        print("\nMétriques globales (jeu de test)")
+        print(f"  ROC-AUC : {roc_auc:.3f}")
+        print(f"  PR-AUC  : {pr_auc:.3f}")
+        mlflow.log_metrics({"roc_auc": roc_auc, "pr_auc": pr_auc})
+
+        for seuil in SEUILS_A_EVALUER:
+            metriques = evaluer_seuil(y_test, probabilites, seuil)
+            mlflow.log_metrics(
+                {
+                    f"precision_{seuil:.2f}": metriques["precision"],
+                    f"recall_{seuil:.2f}": metriques["recall"],
+                    f"f1_{seuil:.2f}": metriques["f1"],
+                }
+            )
+
+        # Le modèle est archivé comme artefact MLflow pour le suivi d'expériences ;
+        # le serving continue de charger le .joblib ci-dessous (inchangé).
+        mlflow.sklearn.log_model(pipeline, artifact_path="model")
+
+        CHEMIN_MODELE.parent.mkdir(parents=True, exist_ok=True)
+        joblib.dump(pipeline, CHEMIN_MODELE)
+        print(f"\nPipeline sérialisé dans {CHEMIN_MODELE}")
 
 
 if __name__ == "__main__":
