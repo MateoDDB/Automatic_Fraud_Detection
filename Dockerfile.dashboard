@@ -1,0 +1,16 @@
+FROM python:3.11-slim
+
+WORKDIR /app
+
+# psycopg2-binary fournit une roue précompilée : aucun outil de compilation requis.
+COPY requirements-dashboard.txt /app/requirements-dashboard.txt
+RUN pip install --no-cache-dir -r /app/requirements-dashboard.txt
+
+# src/ et dashboard/ sont montés en volume par docker-compose.
+ENV PYTHONPATH=/app
+
+EXPOSE 8501
+
+CMD ["streamlit", "run", "dashboard/app.py", \
+     "--server.address=0.0.0.0", "--server.port=8501", \
+     "--browser.gatherUsageStats=false"]

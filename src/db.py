@@ -123,6 +123,14 @@ def construire_enregistrement(
     }
 
 
+REQUETE_TOUTES = """
+SELECT trans_num, merchant, category, amt, transaction_time,
+       fraud_probability, predicted_fraud, is_fraud_actual, created_at
+FROM transactions
+ORDER BY transaction_time;
+"""
+
+
 def obtenir_connexion():
     """Ouvre une connexion psycopg2 vers la base Neon à partir de DATABASE_URL."""
     return psycopg2.connect(config.exiger("DATABASE_URL"))
@@ -155,6 +163,18 @@ def transactions_de_la_veille() -> list[dict]:
     with obtenir_connexion() as conn:
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
             cur.execute(REQUETE_VEILLE)
+            return cur.fetchall()
+
+
+def lire_transactions() -> list[dict]:
+    """Renvoie toutes les transactions enregistrées, triées par instant métier.
+
+    Alimente le dashboard de supervision (KPIs, séries temporelles, dernières
+    transactions) ; la lecture se fait sur la même base que les écritures des DAGs.
+    """
+    with obtenir_connexion() as conn:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute(REQUETE_TOUTES)
             return cur.fetchall()
 
 

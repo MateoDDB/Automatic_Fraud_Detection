@@ -86,5 +86,21 @@ services:
       airflow-init:
         condition: service_completed_successfully
 
+  # Dashboard de supervision : image légère dédiée, indépendante d'Airflow. Lit Neon
+  # (base externe), ne dépend donc pas du postgres de métadonnées.
+  dashboard:
+    build:
+      context: .
+      dockerfile: Dockerfile.dashboard
+    environment:
+      DATABASE_URL: ${DATABASE_URL}
+      FRAUD_THRESHOLD: ${FRAUD_THRESHOLD}
+    volumes:
+      - ./src:/app/src
+      - ./dashboard:/app/dashboard
+    ports:
+      - "8502:8501"
+    restart: always
+
 volumes:
   postgres-db-volume:
