@@ -4,7 +4,13 @@ Sert à filmer la chaîne d'alerte de bout en bout sans attendre qu'une vraie fr
 tombe sur l'API. Sélectionne dans le CSV une transaction réellement frauduleuse que
 le modèle prédit effectivement comme fraude (probabilité au-dessus du seuil), puis la
 fait passer dans tout le pipeline : prédiction, écriture dans Neon et envoi de l'alerte.
+
+La transaction injectée est datée de l'instant courant et reçoit un identifiant
+unique, afin d'apparaître immédiatement comme une fraude fraîche sur le dashboard.
 """
+import uuid
+from datetime import datetime, timezone
+
 import pandas as pd
 import pendulum
 from airflow import DAG
@@ -39,10 +45,21 @@ def selectionner_fraude_predite() -> tuple[pd.DataFrame, float, bool]:
 
 
 def lancer_demo() -> None:
-    """Fait passer une fraude choisie dans le pipeline complet jusqu'à l'alerte."""
+    """Injecte une fraude de démonstration datée de l'instant courant, puis alerte.
+
+    La transaction reprend les caractéristiques d'une vraie fraude du CSV (marchand,
+    montant, catégorie, probabilité du modèle), mais reçoit un identifiant propre et
+    un `transaction_time` fixé à maintenant. Chaque déclenchement crée donc une ligne
+    fraîche, visible aussitôt en tête du dashboard, sans collision avec le jeu de seed
+    ni avec une exécution précédente.
+    """
     df, probabilite, prediction = selectionner_fraude_predite()
     is_fraud_actual = int(df.iloc[0]["is_fraud"])
     enregistrement = construire_enregistrement(df, probabilite, prediction, is_fraud_actual)
+
+    enregistrement["transaction_time"] = datetime.now(timezone.utc).replace(tzinfo=None)
+    enregistrement["trans_num"] = f"demo-{uuid.uuid4().hex[:12]}"
+
     inserer_transaction(enregistrement)
 
     sujet, corps = construire_corps_alerte(enregistrement)
